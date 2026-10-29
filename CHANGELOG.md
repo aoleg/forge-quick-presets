@@ -8,6 +8,7 @@
 - Reset now returns the Aspect Ratio Helper to `Off` and to its configured `Side` and `Align to a multiple of 64` defaults. Before, Reset cleared the align box.
 - Presets saved by 0.1.0 still apply: their Aspect Ratio Helper wrapper fields are read as the new fields, and their layout and output panel fields are skipped.
 - Fixed the Forge preset baseline ids for Hires steps and Hires Distilled CFG Scale, which made those fields look changed in every preset.
+- Stopped saving search boxes, such as the LoRA tab filter, as preset fields.
 
 ## 0.1.0 - 2026-04-29
 

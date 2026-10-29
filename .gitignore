@@ -3,10 +3,8 @@
 __pycache__/
 *.py[cod]
 
-# User presets and automatic backups
-presets/user_presets.json
-presets/user_presets.json.bak-*
-presets/user_presets.json.broken-*
+# User presets, automatic backups and temporary save files
+presets/
 
 # Local Forge/Gradio diagnostic dumps
 gradio_config.json

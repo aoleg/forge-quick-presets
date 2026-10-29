@@ -133,6 +133,7 @@
             if (isHiddenTextbox(node)) continue;
             if (node.querySelector("input[type='file']")) continue;
             if (node.querySelector("[id] input[type='file']")) continue;
+            if (node.querySelector("input[type='search']")) continue;
             if (/^component-\d+$/.test(id) && node.closest("[id*='_controlnet_']")) continue;
             if (/^component-\d+$/.test(id) && node.closest("[id*='script']")) continue;
             if (seen.has(id)) continue;
