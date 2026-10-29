@@ -2,7 +2,7 @@
 
 Delta presets for Forge NEO.
 
-Stable local version: `0.1.0` (2026-04-29).
+Stable local version: `0.1.1` (2026-10-29).
 
 The extension adds a small `Quick Presets` panel below the generation preview. It captures the current UI as a baseline, saves almost any UI field changed after that baseline, and applies those changed fields later without touching Forge's model preset selectors or user-provided media.
 
@@ -18,6 +18,7 @@ Excluded by default:
 - image, mask, gallery, upload fields
 - generate/interrupt/skip controls
 - ControlNet `Control Type` filter state
+- the output panel, hidden textboxes and layout blocks
 
 Recommended save flow:
 
@@ -39,6 +40,7 @@ Notes:
 
 - Native Forge `UI Preset`s are not modified; quick presets are stored separately.
 - ControlNet image, mask, gallery, and upload fields are intentionally ignored.
+- With the Aspect Ratio Helper installed, its ratio, `Side` and `Align to a multiple of 64` are saved together with Width and Height. A change to any of them saves all five.
 
 Presets are stored in `presets/user_presets.json`.
 

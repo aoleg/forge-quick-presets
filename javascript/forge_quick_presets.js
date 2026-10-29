@@ -12,7 +12,25 @@
         img2img_scheduler: "img2img_sampling",
     };
     const DIMENSION_FIELD_IDS = new Set(["txt2img_width", "txt2img_height", "img2img_width", "img2img_height"]);
+    // Gradio layout blocks only wrap real fields; reading one returns the value of its first input.
+    const LAYOUT_COMPONENT_TYPES = new Set(["row", "column", "group", "form", "box", "tabs", "tabitem", "tab", "accordion"]);
+    // Aspect Ratio Helper injects plain inputs, not Gradio components.
+    const ARH_OFF = "Off";
+    const ARH_LOCK = "🔒";
+    const ARH_FIELDS = [
+        { key: "ratio", suffix: "select_aspect_ratio", label: "Aspect ratio" },
+        { key: "side", suffix: "arh_side_length", label: "Side" },
+        { key: "align", suffix: "arh_align64", label: "Align to a multiple of 64" },
+    ];
+    const ARH_LEGACY_IDS = {
+        ratio: ["ratio", "size_toolbox", "dimensions_row"],
+        side: ["arh_side_block"],
+        align: ["arh_controls"],
+    };
     const EXCLUDED_ID_PATTERNS = [
+        /^(txt2img|img2img)_(size_toolbox|ratio|arh_controls|arh_side_block)$/,
+        /^(txt2img|img2img)_results/,
+        /^(generation_info|html_info|html_log)_/,
         /^forge_ui_preset$/,
         /^forge_ui_dtype$/,
         /^forge_refresh_checkpoint$/,
@@ -55,6 +73,7 @@
         scrollPreserveCanceled: false,
         scrollCancelCleanup: null,
         mountFrame: null,
+        componentIndex: null,
         themeSyncWired: false,
         themeSyncPending: false,
     };
@@ -101,12 +120,17 @@
         const nodes = Array.from(root.querySelectorAll("[id]"));
         const result = [];
         const seen = new Set();
+        const results = app().querySelector(`#${activeTabName()}_results`);
 
         for (const node of nodes) {
             const id = node.id;
             if (isExcludedRoot(node)) continue;
             if (!node.querySelector("input, textarea, select, button[role='switch']")) continue;
             if (node.closest(`.${PANEL_CLASS}`)) continue;
+            if (node.querySelector(`.${PANEL_CLASS}`)) continue;
+            if (results?.contains(node)) continue;
+            if (isLayoutRoot(node)) continue;
+            if (isHiddenTextbox(node)) continue;
             if (node.querySelector("input[type='file']")) continue;
             if (node.querySelector("[id] input[type='file']")) continue;
             if (/^component-\d+$/.test(id) && node.closest("[id*='_controlnet_']")) continue;
@@ -124,9 +148,37 @@
         return label?.textContent?.trim()?.replace(/\s+/g, " ") || root.id;
     }
 
-    function gradioComponentConfig(id) {
+    function componentIndex() {
         const components = window.gradio_config?.components || [];
-        return components.find((component) => component?.props?.elem_id === id) || null;
+        if (state.componentIndex?.components === components) return state.componentIndex;
+
+        const byElemId = new Map();
+        const byId = new Map();
+        for (const component of components) {
+            if (!component) continue;
+            const elemId = component.props?.elem_id;
+            if (elemId && !byElemId.has(elemId)) byElemId.set(elemId, component);
+            byId.set(component.id, component);
+        }
+        state.componentIndex = { components, byElemId, byId };
+        return state.componentIndex;
+    }
+
+    function gradioComponentConfig(id) {
+        const index = componentIndex();
+        const match = /^component-(\d+)$/.exec(id || "");
+        if (match) return index.byId.get(Number(match[1])) || null;
+        return index.byElemId.get(id) || null;
+    }
+
+    function isLayoutRoot(node) {
+        if (node?.classList?.contains("input-accordion")) return false;
+        return LAYOUT_COMPONENT_TYPES.has(gradioComponentConfig(node?.id)?.type);
+    }
+
+    function isHiddenTextbox(node) {
+        const config = gradioComponentConfig(node?.id);
+        return config?.type === "textbox" && config.props?.visible === false && !isVisible(node);
     }
 
     function choiceLabel(choice) {
@@ -241,6 +293,10 @@
             return readScriptList(root).value;
         }
 
+        if (aspectRatioHelperKey(root.id)) {
+            return readAspectRatioHelperInput(root);
+        }
+
         if (root.id?.endsWith("_controlnet_control_step_slider")) {
             const rangeValue = readRangeSlider(root);
             if (rangeValue !== null) return rangeValue;
@@ -294,7 +350,76 @@
         }
         addControlNetRangeSliders(fields);
         addSpecialTabFields(fields);
+        addAspectRatioHelperFields(fields);
         return fields;
+    }
+
+    function aspectRatioHelperIds(tab = activeTabName()) {
+        return Object.fromEntries(ARH_FIELDS.map(({ key, suffix }) => [key, `${tab}_${suffix}`]));
+    }
+
+    function aspectRatioHelperKey(id) {
+        const match = /^(txt2img|img2img)_(.+)$/.exec(id || "");
+        return ARH_FIELDS.find((field) => field.suffix === match?.[2])?.key || null;
+    }
+
+    function addAspectRatioHelperFields(fields) {
+        for (const { suffix, label } of ARH_FIELDS) {
+            const id = `${activeTabName()}_${suffix}`;
+            const input = findComponentById(id);
+            if (!input) continue;
+            fields[id] = { id, label, value: readAspectRatioHelperInput(input) };
+        }
+    }
+
+    function readAspectRatioHelperInput(input) {
+        if (input.type === "checkbox") return Boolean(input.checked);
+        if (input.tagName === "SELECT") return input.value || ARH_OFF;
+        return readNumber(input);
+    }
+
+    function aspectRatioHelperDefault(field) {
+        const key = aspectRatioHelperKey(field?.id);
+        if (!key) return null;
+        const options = typeof opts !== "undefined" ? opts : window.opts || {};
+        const values = {
+            ratio: ARH_OFF,
+            side: Number(options.arh_javascript_side_length ?? 1024),
+            align: Boolean(options.arh_javascript_align_64 ?? true),
+        };
+        return { ...field, value: values[key] };
+    }
+
+    function isAspectRatioHelperActive(tab = activeTabName()) {
+        return Boolean(findComponentById(aspectRatioHelperIds(tab).ratio));
+    }
+
+    // Width, Height and the helper's inputs only make sense together: a ratio re-derives the size.
+    function dimensionGroupIds(tab = activeTabName()) {
+        return [`${tab}_width`, `${tab}_height`, ...Object.values(aspectRatioHelperIds(tab))];
+    }
+
+    function migrateLegacyField(field, tab) {
+        const match = /^(txt2img|img2img)_(.+)$/.exec(field?.id || "");
+        if (!match || match[1] !== tab) return field;
+        const key = Object.keys(ARH_LEGACY_IDS).find((name) => ARH_LEGACY_IDS[name].includes(match[2]));
+        if (!key) return field;
+        const legacyType = { ratio: "string", side: "number", align: "boolean" }[key];
+        if (typeof field.value !== legacyType) return null;
+        const target = ARH_FIELDS.find((item) => item.key === key);
+        return { ...field, id: `${tab}_${target.suffix}`, label: target.label };
+    }
+
+    function normalizePresetFields(fields, tab) {
+        const result = [];
+        const ids = new Set();
+        for (const field of fields) {
+            const normalizedField = migrateLegacyField(normalizeScriptListField(field), tab);
+            if (!normalizedField || ids.has(normalizedField.id)) continue;
+            ids.add(normalizedField.id);
+            result.push(normalizedField);
+        }
+        return result;
     }
 
     function addSpecialTabFields(fields) {
@@ -336,7 +461,9 @@
             if (isControlNetTypeFilterId(id)) continue;
             if (isUnsafeUnstableEnableField(field)) continue;
             if (!isControlNetFieldEnabled(id, current)) continue;
-            if (!baseline[id] || !equalValues(field.value, baseline[id].value)) {
+            // The helper may inject its inputs after the baseline was captured.
+            const base = baseline[id] || aspectRatioHelperDefault(field);
+            if (!base || !equalValues(field.value, base.value)) {
                 changed[id] = field;
             }
         }
@@ -350,6 +477,13 @@
             const pairedId = PAIRED_FIELD_IDS[id];
             if (!pairedId || changed[pairedId] || !current[pairedId]) continue;
             changed[pairedId] = current[pairedId];
+        }
+
+        if (!isAspectRatioHelperActive()) return;
+        const groupIds = dimensionGroupIds();
+        if (!groupIds.some((id) => changed[id])) return;
+        for (const id of groupIds) {
+            if (!changed[id] && current[id]) changed[id] = current[id];
         }
     }
 
@@ -368,13 +502,51 @@
         return `${id.slice(0, index)}_controlnet_enable_checkbox`;
     }
 
-    function setNativeValue(element, value) {
+    function setNativeValue(element, value, { change = true } = {}) {
         const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value");
         if (descriptor?.set) descriptor.set.call(element, value);
         else element.value = value;
         if (typeof updateInput === "function") updateInput(element);
         element.dispatchEvent(new Event("input", { bubbles: true }));
-        element.dispatchEvent(new Event("change", { bubbles: true }));
+        if (change) element.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function reverseAspectRatio(ratio) {
+        if (!ratio?.includes(":")) return null;
+        const [width, height] = ratio.split(":");
+        return `${height}:${width}`;
+    }
+
+    async function setAspectRatioHelperField(input, field) {
+        if (input.tagName === "SELECT") return setAspectRatioHelperRatio(input, field.value);
+        if (input.type === "checkbox") {
+            const checked = Boolean(field.value);
+            if (input.checked !== checked) input.click();
+            return input.checked === checked;
+        }
+        setNativeValue(input, field.value);
+        return true;
+    }
+
+    function setAspectRatioHelperRatio(select, value) {
+        const label = `${value}`;
+        const values = () => Array.from(select.options).map((option) => option.value);
+        let flipped = false;
+        if (!values().includes(label)) {
+            // The swap button turns every ratio around in place; match the saved orientation.
+            if (!values().includes(reverseAspectRatio(label))) return false;
+            for (const option of Array.from(select.querySelectorAll(".ar-option"))) {
+                const reversed = reverseAspectRatio(option.value);
+                if (!reversed) continue;
+                option.value = reversed;
+                option.textContent = reversed;
+            }
+            flipped = true;
+        }
+        if (!flipped && select.value === label) return true;
+        select.value = label;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        return select.value === label;
     }
 
     function setCheckbox(root, value) {
@@ -840,7 +1012,20 @@
             return await setSelectedTab(root, field.value);
         }
 
-        if (isExcludedRoot(root)) return false;
+        if (aspectRatioHelperKey(field.id)) {
+            return await setAspectRatioHelperField(root, field);
+        }
+
+        if (isExcludedRoot(root) || isLayoutRoot(root)) return false;
+
+        // A change event makes the Aspect Ratio Helper re-derive the other side from this one.
+        if (DIMENSION_FIELD_IDS.has(field.id) && isAspectRatioHelperActive()) {
+            const number = root.querySelector("input[type='number']");
+            if (number) {
+                setNativeValue(number, field.value, { change: false });
+                return true;
+            }
+        }
 
         if (field.id === "script_list") {
             return await setScriptList(root, field);
@@ -1105,7 +1290,7 @@
             const preset = await request(`/get/${encodeURIComponent(key)}`);
             let applied = 0;
             const fields = preset.fields || {};
-            const rawEntries = await addSourceBaselinePairedEntries(Object.values(fields).map(normalizeScriptListField), preset);
+            const rawEntries = await addSourceBaselinePairedEntries(normalizePresetFields(Object.values(fields), tab), preset);
             const entries = enrichPresetFields(rawEntries).filter((field) => !isUnsafeUnstableEnableField(field));
             const nextFieldIds = new Set(entries.map((field) => field.id).filter(Boolean));
 
@@ -1126,9 +1311,7 @@
                 await waitForScriptFields(regularFields);
             }
 
-            for (const field of regularFields) {
-                if (await applyField(field)) applied += 1;
-            }
+            applied += await applyRegularFields(regularFields, tab);
             restoreAspectRatioHelperIfNeeded(regularFields, tab);
 
             if (scriptFields.length > 0) {
@@ -1216,6 +1399,39 @@
         if (id.endsWith("_controlnet_type_filter_radio")) return 0;
         if (id.endsWith("_controlnet_preprocessor_dropdown") || id.endsWith("_controlnet_model_dropdown")) return 2;
         return 1;
+    }
+
+    async function applyRegularFields(fields, tab) {
+        const groupIds = new Set(dimensionGroupIds(tab));
+        let applied = 0;
+        for (const field of fields) {
+            if (groupIds.has(field.id)) continue;
+            if (await applyField(field)) applied += 1;
+        }
+        return applied + await applyDimensionFields(fields.filter((field) => groupIds.has(field.id)), tab);
+    }
+
+    // Side and alignment first, since a ratio is applied through them. The lock captures the
+    // ratio of the size already set; any other ratio overwrites the size, so set it again after.
+    async function applyDimensionFields(fields, tab) {
+        if (fields.length === 0) return 0;
+        const byId = new Map(fields.map((field) => [field.id, field]));
+        const ids = aspectRatioHelperIds(tab);
+        const ratio = byId.get(ids.ratio);
+        const sizes = [byId.get(`${tab}_width`), byId.get(`${tab}_height`)].filter(Boolean);
+        const applied = new Set();
+        const apply = async (field) => {
+            if (field && await applyField(field)) applied.add(field.id);
+        };
+
+        await apply(byId.get(ids.side));
+        await apply(byId.get(ids.align));
+        for (const field of sizes) await apply(field);
+        await apply(ratio);
+        if (ratio && ratio.value !== ARH_OFF && ratio.value !== ARH_LOCK) {
+            for (const field of sizes) await apply(field);
+        }
+        return applied.size;
     }
 
     async function waitForScriptFields(fields) {
@@ -1350,9 +1566,7 @@
             await deactivateScriptsSectionIfNone();
         }
 
-        for (const field of regularFields) {
-            if (await applyField(field)) appliedCount += 1;
-        }
+        appliedCount += await applyRegularFields(regularFields, tab);
         restoreAspectRatioHelperIfNeeded(regularFields, tab);
 
         if (showEmptyStatus || resetFields.length > 0) {
@@ -1395,6 +1609,7 @@
 
     function isGenericBooleanField(field) {
         if (typeof field?.value !== "boolean") return false;
+        if (aspectRatioHelperKey(field.id)) return false;
         if (field.id?.includes("_controlnet_enable_checkbox")) return false;
         if ((field.id === "txt2img_enable" || field.id === "img2img_enable") && field.label === "Refiner") return false;
         if (field.id === "txt2img_hr" || field.id === "img2img_hr") return false;
@@ -1423,6 +1638,10 @@
     function fallbackBaselineField(field) {
         if (field.id === "script_list") {
             return { ...field, value: 0, display_value: "None" };
+        }
+
+        if (aspectRatioHelperKey(field.id)) {
+            return aspectRatioHelperDefault(field);
         }
 
         if (field.id?.includes("_controlnet_enable_checkbox")) {

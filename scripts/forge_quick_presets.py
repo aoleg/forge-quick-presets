@@ -25,9 +25,9 @@ FORGE_BASELINE_FIELDS = {
         "txt2img_cfg_scale": ("{preset}_t2i_cfg", "CFG Scale"),
         "txt2img_distilled_cfg_scale": ("{preset}_t2i_dcfg", "Distilled CFG Scale"),
         "txt2img_batch_size": ("{preset}_t2i_batch_size", "Batch Size"),
-        "txt2img_hr_second_pass_steps": ("{preset}_t2i_hr_step", "Hires steps"),
+        "txt2img_hires_steps": ("{preset}_t2i_hr_step", "Hires steps"),
         "txt2img_hr_cfg": ("{preset}_t2i_hr_cfg", "Hires CFG Scale"),
-        "txt2img_hr_distilled_cfg_scale": ("{preset}_t2i_hr_dcfg", "Hires Distilled CFG Scale"),
+        "txt2img_hr_distilled_cfg": ("{preset}_t2i_hr_dcfg", "Hires Distilled CFG Scale"),
     },
     "img2img": {
         "img2img_sampling": ("{preset}_i2i_sampler", "Sampling Method"),
